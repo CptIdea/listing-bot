@@ -17,6 +17,10 @@ func init() {
 	var exist bool
 	var err error
 
+	if err := godotenv.Load(); err != nil {
+		log.Fatal("No .env file found")
+	}
+
 	dsn, exist = os.LookupEnv("DSN")
 	if !exist {
 		log.Fatal(fmt.Errorf(".env DSN not exist"))
@@ -62,10 +66,6 @@ func init() {
 	logFile.Truncate(0)
 
 	log.SetOutput(logFile)
-
-	if err := godotenv.Load(); err != nil {
-		log.Fatal("No .env file found")
-	}
 
 }
 
