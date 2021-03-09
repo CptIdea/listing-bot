@@ -10,6 +10,7 @@ import (
 	"github.com/CptIdea/go-vk-api-2"
 	"github.com/joho/godotenv"
 	"gorm.io/driver/mysql"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -24,6 +25,19 @@ func init() {
 	dsn, exist = os.LookupEnv("DSN")
 	if !exist {
 		log.Fatal(fmt.Errorf(".env DSN not exist"))
+	}
+
+	rawUseSQLite, exist := os.LookupEnv("USE_SQLITE")
+	if !exist {
+		log.Fatal(fmt.Errorf(".env USE_SQLITE not exist"))
+	}
+	if strings.ToLower(rawUseSQLite) == "true" {
+		useSQLite = true
+	}
+
+	sqLite, exist = os.LookupEnv("SQLLITE")
+	if !exist {
+		log.Fatal(fmt.Errorf(".env SQLLITE not exist"))
 	}
 
 	token, exist = os.LookupEnv("VK_TOKEN")
@@ -71,16 +85,32 @@ func init() {
 
 var admins []int
 var (
-	dsn     = ""
-	token   = ""
-	groupID = 0
-	version = ""
+	useSQLite = false
+	dsn       = ""
+	sqLite    = ""
+	token     = ""
+	groupID   = 0
+	version   = ""
 )
 
 func main() {
-	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
-	if err != nil {
-		log.Fatalf("Error %s", err.Error())
+	var db *gorm.DB
+	var err error
+
+	if useSQLite {
+
+		db, err = gorm.Open(sqlite.Open(sqLite), &gorm.Config{})
+		if err != nil {
+			log.Fatalf("Error %s", err.Error())
+		}
+
+	} else {
+
+		db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{})
+		if err != nil {
+			log.Fatalf("Error %s", err.Error())
+		}
+
 	}
 
 	s := vk.NewSession(token, version)
@@ -216,6 +246,103 @@ func main() {
 				if err != nil {
 					log.Println(err)
 				}
+			}
+			if strings.HasPrefix(strings.ToLower(upd.Object.MessageNew.Text), "удалить") && canCreate(upd.Object.MessageNew.FromId) {
+
+				if len(strings.Split(upd.Object.MessageNew.Text, " ")) < 2 {
+					s.SendMessage(upd.Object.MessageNew.PeerId, "Используйте: \"удалить <номер>\"")
+					continue
+				}
+				id, err := strconv.Atoi(strings.Replace(upd.Object.MessageNew.Text, strings.Split(upd.Object.MessageNew.Text, " ")[0]+" ", "", 1))
+				if handle(err) {
+					s.SendMessage(upd.Object.MessageNew.PeerId, fmt.Sprintf("%q - не номер списка", strings.Replace(upd.Object.MessageNew.Text, strings.Split(upd.Object.MessageNew.Text, " ")[0]+" ", "", 1)))
+					continue
+				}
+				newList := list{ID: id, PeerID: upd.Object.MessageNew.PeerId}
+				tx := db.First(&newList)
+				if tx.Error != nil {
+					s.SendMessage(upd.Object.MessageNew.PeerId, fmt.Sprintf("Невозможно найти список №%d", id))
+					continue
+				}
+				db.Delete(&newList)
+
+				textToSend := fmt.Sprintf("Удалён список %q!\n\nВот кто успел записаться:\n", newList.Name)
+
+				ids := []int{}
+				for _, v := range strings.Split(newList.Users, ";") {
+					n, err := strconv.Atoi(v)
+					if err != nil {
+						log.Println(err)
+						continue
+					}
+					ids = append(ids, n)
+				}
+
+				usrs, err := s.GetUsersInfo(ids)
+
+				for i, v := range usrs {
+					textToSend += fmt.Sprintf("%d. %s %s\n", i+1, v.FirstName, v.LastName)
+				}
+
+				_, err = s.SendKeyboard(upd.Object.MessageNew.PeerId, vk.GenerateEmptyKeyBoard(""), textToSend)
+				handle(err)
+
+			}
+			if strings.Contains(strings.ToLower(upd.Object.MessageNew.Text), "выписать") && canCreate(upd.Object.MessageNew.FromId) {
+				if len(strings.Split(upd.Object.MessageNew.Text, " ")) < 3 {
+
+					if canCreate(upd.Object.MessageNew.FromId) {
+						s.SendMessage(upd.Object.MessageNew.PeerId, "Используйте: \"выписать <ID списка> <номер в списке>\"")
+					}
+
+					continue
+				}
+
+				l := list{}
+
+				n, err := strconv.Atoi(strings.Split(upd.Object.MessageNew.Text, " ")[1])
+				if handle(err) {
+					continue
+				}
+
+				db.First(&l, n)
+
+				nom, err := strconv.Atoi(strings.Split(upd.Object.MessageNew.Text, " ")[2])
+				if handle(err) {
+					continue
+				}
+
+				if len(strings.Split(l.Users, ";")) <= nom {
+					s.SendMessage(upd.Object.MessageNew.PeerId, "Такого номера нет :0")
+					continue
+				}
+
+				ids := []int{}
+				for i, v := range strings.Split(l.Users, ";") {
+					n, err := strconv.Atoi(v)
+					if err != nil {
+						log.Println(err)
+						continue
+					}
+					if i == nom-1 {
+						l.Users = strings.Replace(l.Users, strconv.Itoa(upd.Object.MessageNew.FromId)+";", "", 1)
+						continue
+					}
+					ids = append(ids, n)
+				}
+
+				usrs, err := s.GetUsersInfo(ids)
+				handle(err)
+				textToSend := fmt.Sprintf("Кого-то успешно выписали из %q!\n\nВот весь список:\n", l.Name)
+
+				for i, v := range usrs {
+					textToSend += fmt.Sprintf("%d. %s %s\n", i+1, v.FirstName, v.LastName)
+				}
+
+				_, err = s.SendMessage(upd.Object.MessageNew.PeerId, textToSend)
+				handle(err)
+
+				db.Save(&l)
 			}
 		}
 	}
