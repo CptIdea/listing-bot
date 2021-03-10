@@ -98,14 +98,14 @@ func main() {
 	var err error
 
 	if useSQLite {
-
+		fmt.Println(1)
 		db, err = gorm.Open(sqlite.Open(sqLite), &gorm.Config{})
 		if err != nil {
 			log.Fatalf("Error %s", err.Error())
 		}
 
 	} else {
-
+		fmt.Println(2)
 		db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{})
 		if err != nil {
 			log.Fatalf("Error %s", err.Error())
